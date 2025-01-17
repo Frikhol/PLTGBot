@@ -62,7 +62,32 @@ func main() {
 
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	httpRequest := "https://twhelp.app/api/v2/versions/pl/servers/pl206/tribes/309/ennoblements?limit=1&sort=createdAt%3ADESC"
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+
+	updates := bot.GetUpdatesChan(u)
+
+	lastId := int64(0)
+
+	go func() {
+		for {
+			lastId = sendEnnobleInfo(bot, 1, lastId)
+			time.Sleep(1 * time.Minute)
+		}
+	}()
+
+	for update := range updates {
+		if update.Message != nil {
+			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
+
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
+			bot.Send(msg)
+		}
+	}
+}
+
+func sendEnnobleInfo(bot *tgbotapi.BotAPI, n int, last int64) int64 {
+	httpRequest := fmt.Sprintf("https://twhelp.app/api/v2/versions/pl/servers/pl206/tribes/309/ennoblements?limit=%d&sort=createdAt%%3ADESC", n)
 	resp, err := http.Get(httpRequest)
 	if err != nil {
 		log.Panic(err)
@@ -80,30 +105,22 @@ func main() {
 		log.Panic(err)
 	}
 
-	lastId := data.Data[0].Id
-	for {
-		err = json.Unmarshal(body, &data)
-		if err != nil {
-			log.Panic(err)
-		}
-		if lastId != data.Data[0].Id {
-			lastId = data.Data[0].Id
-			msg := tgbotapi.NewMessage(281397467, fmt.Sprintf("Новый захват в %s\nДеревня: %s\nЗахватил: %s(%s)", data.Data[0].CreatedAt, data.Data[0].Village.FullName, data.Data[0].NewOwner.Name, data.Data[0].NewOwner.ProfileUrl))
-			bot.Send(msg)
-		}
-		time.Sleep(1 * time.Minute)
+	lastId := last
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		log.Panic(err)
 	}
-	//u := tgbotapi.NewUpdate(0)
-	//u.Timeout = 60
-	//
-	//updates := bot.GetUpdatesChan(u)
-	//
-	//for update := range updates {
-	//	if update.Message != nil {
-	//		log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-	//
-	//		msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-	//		bot.Send(msg)
-	//	}
-	//}
+	if lastId != data.Data[0].Id {
+		lastId = data.Data[0].Id
+		ennobleTime, _ := time.Parse(time.RFC3339, data.Data[0].CreatedAt)
+		ennobleTime = ennobleTime.Add(time.Hour)
+		formatedTime := ennobleTime.Format("15:04:05 02.01.2006")
+		villageInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[0].Village.ProfileUrl, data.Data[0].Village.FullName)
+		newOwnerInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[0].NewOwner.ProfileUrl, data.Data[0].NewOwner.Name)
+		msg := tgbotapi.NewMessage(281397467, fmt.Sprintf("Новый захват в %s(PL)\nДеревня: %s\nЗахватил: %s", formatedTime, villageInfo, newOwnerInfo))
+		msg.ParseMode = tgbotapi.ModeHTML
+		msg.DisableWebPagePreview = true
+		bot.Send(msg)
+	}
+	return lastId
 }
