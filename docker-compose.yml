@@ -1,0 +1,93 @@
+services:
+  # Postgres
+  postgres:
+    image: postgres:13.10-alpine
+    container_name: mg_postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - common-network
+    environment:
+      - POSTGRES_PASSWORD=test
+      - POSTGRES_USER=test
+      - POSTGRES_DB=test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  # Goose для миграций
+  goose:
+    image: stonys/goose-migrate
+    container_name: mg_service-goose
+    networks:
+      - common-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - GOOSE_DRIVER=postgres
+      - GOOSE_DBSTRING=postgres://test:test@postgres:5432/test?sslmode=disable
+    volumes:
+      - ./migrations:/migrations
+    entrypoint: [ "/bin/sh", "-c", "goose -dir /migrations up" ]
+
+#  # Prometheus
+#  prometheus:
+#    image: prom/prometheus
+#    container_name: prometheus
+#    ports:
+#      - "9090:9090"
+#    networks:
+#      - common-network
+#    volumes:
+#      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+#    command:
+#      - '--config.file=/etc/prometheus/prometheus.yml'
+
+#  # Grafana
+#  grafana:
+#    image: grafana/grafana
+#    container_name: grafana
+#    ports:
+#      - "3000:3000"
+#    networks:
+#      - common-network
+#    environment:
+#      - GF_SECURITY_ADMIN_PASSWORD=admin
+#    volumes:
+#      - grafana-storage:/var/lib/grafana
+
+#  # Сервис
+#  app:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile  # Путь к Dockerfile
+#    container_name: go-app
+#    networks:
+#      - common-network
+#    depends_on:
+#      - postgres
+#      - goose
+#      - redis
+#    environment:
+#      - POSTGRES_HOST=postgres
+#      - POSTGRES_PORT=5432
+#      - POSTGRES_USER=test
+#      - POSTGRES_PASSWORD=test
+#      - POSTGRES_DB=test
+#      - REDIS_HOST=redis
+#      - REDIS_PORT=6379
+#      - GRPC_PORT=50051
+#      - GW_PORT=8080
+#    ports:
+#      - "50051:50051"
+#      - "8080:8080"
+
+networks:
+  common-network:
+    driver: bridge
+
+volumes:
+  grafana-storage:

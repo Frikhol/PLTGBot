@@ -1,0 +1,53 @@
+version: '3'
+
+vars:
+  DB_DRIVER: postgres
+  DB_STRING: "postgres://test:test@localhost:5433/test?sslmode=disable"
+
+tasks:
+
+  container-build:
+    cmds:
+      - |
+        docker build \
+          --build-arg GO_SVC_PATHS=. \
+          --build-arg NAME=PLNoticerBot \
+          --build-arg VERSION=1.0.0 \
+          -t auth_service:1.0.0 .
+
+
+  migrate-up:
+    desc: Запуск всех доступных миграций
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} {{.DB_DRIVER}} "{{.DB_STRING}}" up
+
+  migrate-down:
+    desc: Откат последней миграции
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} {{.DB_DRIVER}} "{{.DB_STRING}}" down
+
+
+  migrate-create:
+    desc: "Create a new SQL migration file. for example: 'task migrate:create NAME=new_migration' "
+    cmds:
+      - |
+        if [ -z "{{.NAME}}" ]; then
+          echo "Usage: task migration-create NAME=<migration_name>"
+        else
+          cd migrations && goose create {{.NAME}} sql
+        fi
+    silent: true
+
+  enviroment-up:
+    desc: Запуск сторонних сервисов для тестирования
+    cmds:
+      - docker-compose up -d
+
+
+  generate:
+    desc: "Генерация моков, конвертеров, подкачка вендоров"
+#    deps:
+#      - mocks
+    cmds:
+      - go generate ./...
+      - go mod tidy
