@@ -1,6 +1,8 @@
 package entrypoint
 
 import (
+	"database/sql"
+	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
 	"log"
@@ -13,6 +15,9 @@ func Run(cfg *config.Config, logger *zap.Logger) error {
 	if err != nil {
 		logger.Info("Failed to initialize bot", zap.Error(err))
 	}
+
+	connStr := fmt.Sprintf("user=%s password=%s dbname=plnoticer sslmode=disable", cfg.DbUser, cfg.DbPass)
+	db, err := sql.Open("postgres", connStr)
 
 	bot.Debug = true
 

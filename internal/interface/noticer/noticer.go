@@ -11,15 +11,15 @@ import (
 	"time"
 )
 
-type NoticerHandler struct{}
+type Handler struct{}
 
 type Noticer interface {
 	Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, logger *zap.Logger) error
 	SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64
 }
 
-func NewNoticer() *NoticerHandler {
-	return &NoticerHandler{}
+func NewNoticer() *Handler {
+	return &Handler{}
 }
 
 type Tribe struct {
@@ -64,7 +64,7 @@ type EnnobleData struct {
 	Data   []Ennoblement `json:"data"`
 }
 
-func (n *NoticerHandler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, logger *zap.Logger) error {
+func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, logger *zap.Logger) error {
 	lastId := int64(0)
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ну поехали, последние проёбы:")
 	bot.Send(msg)
@@ -75,7 +75,7 @@ func (n *NoticerHandler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, log
 	}
 }
 
-func (n *NoticerHandler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {
+func (n *Handler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {
 	httpRequest := "https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?limit=100&sort=createdAt%3ADESC"
 	resp, err := http.Get(httpRequest)
 	if err != nil {
