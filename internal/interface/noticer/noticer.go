@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	database "tgBot/internal/infra/database"
 	"time"
 )
@@ -18,6 +19,12 @@ type Handler struct{}
 type Noticer interface {
 	Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 	SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64
+	Stop(psql *sql.DB, logger *zap.Logger) error
+	Register(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
+	Check(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
+	Reserve(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
+	Clear(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
+	Help(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 }
 
 func NewNoticer() *Handler {
@@ -73,7 +80,7 @@ func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.
 		chat = database.Chat{
 			Id:         db.GetLastChatId() + 1,
 			ChatId:     update.Message.Chat.ID,
-			IsNoticing: true,
+			IsNoticing: false,
 			LastLostId: 0,
 			LastGetId:  0}
 		db.InsertChat(chat)
@@ -83,6 +90,7 @@ func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Бот уже уведомляет этот чат")
 		bot.Send(msg)
 	}
+
 	if !chat.IsNoticing {
 		chat.IsNoticing = true
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Последние проёбы:")
@@ -99,8 +107,161 @@ func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.
 	return nil
 }
 
+func (n *Handler) Register(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	words := strings.Fields(update.Message.Text)
+	if len(words) < 2 {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неверно выполненная команда: /register [nickname]")
+		bot.Send(msg)
+	} else {
+		user, err := db.GetUser(update.Message.From.ID)
+		if err != nil {
+			user = database.User{
+				Id:            db.GetLastUserId() + 1,
+				Nickname:      words[1],
+				TgId:          update.Message.From.ID,
+				ReservedCount: 0}
+			err = db.InsertUser(user)
+			if err == nil {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Успешно зарегистрирован: %s", words[1]))
+				bot.Send(msg)
+			}
+		} else {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ранее зарегистрирован: %s", user.Nickname))
+			bot.Send(msg)
+		}
+	}
+	return nil
+}
+
+func (n *Handler) Check(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	_, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Я тебя не знаю, выполни регистрацию : /register [nickname]")
+		bot.Send(msg)
+	} else {
+		cords := strings.Fields(update.Message.Text)
+		if len(cords) < 2 {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неверно выполненная команда: /check [cords] ...")
+			bot.Send(msg)
+		} else {
+			msgText := "Результат проверки координат:\n"
+			for i, cord := range cords {
+				if i == 0 {
+					continue
+				}
+				reserverUser, err := db.GetUserByCoords(cord)
+				var reserverNick string
+				if err != nil {
+					reserverNick = "пусто"
+				} else {
+					reserverNick = reserverUser.Nickname
+				}
+				msgText += fmt.Sprintf("%s - %s\n", cord, reserverNick)
+			}
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
+			bot.Send(msg)
+		}
+	}
+	return nil
+}
+
+func (n *Handler) Clear(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	user, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Я тебя не знаю, выполни регистрацию : /register [nickname]")
+		bot.Send(msg)
+	} else {
+		cords := strings.Fields(update.Message.Text)
+		if len(cords) < 2 {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неверно выполненная команда: /clear [cords] ...")
+			bot.Send(msg)
+		} else {
+			msgText := "Результат очистки координат:\n"
+			for i, cord := range cords {
+				if i == 0 {
+					continue
+				}
+				reserverUser, err := db.GetUserByCoords(cord)
+				var result string
+				if err != nil {
+					result = "было не забронировано"
+				} else if reserverUser.Id == user.Id {
+					if err = db.DeleteVillage(cord); err == nil {
+						result = "разбронировано"
+					} else {
+						result = "Ошибка"
+					}
+				} else {
+					result = "это чужая бронь"
+				}
+				msgText += fmt.Sprintf("%s - %s\n", cord, result)
+			}
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
+			bot.Send(msg)
+		}
+	}
+	return nil
+}
+
+func (n *Handler) Reserve(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	user, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Я тебя не знаю, выполни регистрацию : /register [nickname]")
+		bot.Send(msg)
+	} else {
+		cords := strings.Fields(update.Message.Text)
+		if len(cords) < 2 {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неверно выполненная команда: /reserve [cords] ...")
+			bot.Send(msg)
+		} else {
+			msgText := "Результат брони координат:\n"
+			for i, cord := range cords {
+				if i == 0 {
+					continue
+				}
+				reserverUser, err := db.GetUserByCoords(cord)
+				var reserverNick string
+				if err != nil {
+					reserverNick = "Успешно забронировано"
+					db.InsertVillage(user.Id, cord)
+				} else {
+					reserverNick = "Уже забронено - " + reserverUser.Nickname
+				}
+				msgText += fmt.Sprintf("%s - %s\n", cord, reserverNick)
+			}
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
+			bot.Send(msg)
+		}
+	}
+	return nil
+}
+
+func (n *Handler) Help(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	msgText := "Команды: \n" +
+		"/start - запускает отслеживание проебов и вывод уведомлений в чат\n" +
+		"Далее везде где квадратные скобочки, их не пишем, меняем то что в них, например - /register freak\n" +
+		"/register [игровойник] - регистрирует как юзера бота, ник без пробелов одним словом, можно условный\n" +
+		"/check [координаты] - проверяет брони по введенным координатам, нет проверки на правильность ввода координат, главное без пробелов. Можно несколько координат подряд\n" +
+		"/reserve [координаты] - резервирует за вами введенные координаты, те же правила что и с /check\n" +
+		"/clear [координаты] - разбронь введенных координат, только если забронировано вами, иначе нахуй идете\n" +
+		"ох удачи не сломать эту хуету..."
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
+	bot.Send(msg)
+	return nil
+}
+
+func (n *Handler) Stop(psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	db.OffAllChats()
+	return nil
+}
+
 func (n *Handler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {
-	httpRequest := "https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?limit=100&sort=createdAt%3ADESC"
+	httpRequest := "https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?limit=500&sort=createdAt%3ADESC"
 	resp, err := http.Get(httpRequest)
 	if err != nil {
 		log.Panic(err)
