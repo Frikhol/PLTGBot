@@ -17,7 +17,7 @@ CREATE TABLE "chats" (
 CREATE TABLE "chats_config" (
     "id" bigserial PRIMARY KEY,
     "chat_id" bigserial,
-    "update_timeout" integer,
+    "update_timeout" timestamptz,
     "noticing_limit" integer,
     "reserve_time" timestamptz,
     "reserve_limit" integer,

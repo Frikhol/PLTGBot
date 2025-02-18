@@ -1,6 +1,7 @@
 package noticer
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -8,13 +9,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	database "tgBot/internal/infra/database"
 	"time"
 )
 
 type Handler struct{}
 
 type Noticer interface {
-	Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, logger *zap.Logger) error
+	Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 	SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64
 }
 
@@ -64,15 +66,37 @@ type EnnobleData struct {
 	Data   []Ennoblement `json:"data"`
 }
 
-func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, logger *zap.Logger) error {
-	lastId := int64(0)
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ну поехали, последние проёбы:")
-	bot.Send(msg)
-	lastId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, lastId)
-	for {
-		time.Sleep(1 * time.Minute)
-		lastId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, lastId)
+func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	chat, err := db.GetChat(update.Message.Chat.ID)
+	if err != nil {
+		chat = database.Chat{
+			Id:         db.GetLastChatId() + 1,
+			ChatId:     update.Message.Chat.ID,
+			IsNoticing: true,
+			LastLostId: 0,
+			LastGetId:  0}
+		db.InsertChat(chat)
 	}
+
+	if chat.IsNoticing {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Бот уже уведомляет этот чат")
+		bot.Send(msg)
+	}
+	if !chat.IsNoticing {
+		chat.IsNoticing = true
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Последние проёбы:")
+		bot.Send(msg)
+		chat.LastLostId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, chat.LastLostId)
+		go func() {
+			for {
+				time.Sleep(1 * time.Minute)
+				chat.LastLostId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, chat.LastLostId)
+			}
+		}()
+	}
+	db.UpdateChat(chat)
+	return nil
 }
 
 func (n *Handler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {

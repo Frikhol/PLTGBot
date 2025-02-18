@@ -2,8 +2,8 @@ package entrypoint
 
 import (
 	"database/sql"
-	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 	"log"
 	"tgBot/internal/config"
@@ -16,8 +16,12 @@ func Run(cfg *config.Config, logger *zap.Logger) error {
 		logger.Info("Failed to initialize bot", zap.Error(err))
 	}
 
-	connStr := fmt.Sprintf("user=%s password=%s dbname=plnoticer sslmode=disable", cfg.DbUser, cfg.DbPass)
+	connStr := "postgres://test:test@localhost:5432/plnoticer?sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		logger.Info("failed to connect to db", zap.Error(err))
+	}
+	defer db.Close()
 
 	bot.Debug = true
 
@@ -35,8 +39,7 @@ func Run(cfg *config.Config, logger *zap.Logger) error {
 			//log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 			if update.Message.IsCommand() {
 				if update.Message.Command() == "start" {
-					//TODO: check if is already started in this chat
-					go noticer.Start(bot, update, logger)
+					noticer.Start(bot, update, db, logger)
 					continue
 				}
 				if update.Message.Command() == "register" {
