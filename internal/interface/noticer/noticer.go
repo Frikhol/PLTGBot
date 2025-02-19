@@ -10,7 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	database "tgBot/internal/infra/database"
+	"tgBot/internal/infra/database"
 	"time"
 )
 
@@ -25,6 +25,7 @@ type Noticer interface {
 	Reserve(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 	Clear(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 	Help(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
+	Rename(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 }
 
 func NewNoticer() *Handler {
@@ -129,6 +130,31 @@ func (n *Handler) Register(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *s
 		} else {
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ранее зарегистрирован: %s", user.Nickname))
 			bot.Send(msg)
+		}
+	}
+	return nil
+}
+
+func (n *Handler) Rename(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
+	db := database.NewDBHandler(psql, logger)
+	words := strings.Fields(update.Message.Text)
+	if len(words) < 2 {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неверно выполненная команда: /rename [nickname]")
+		bot.Send(msg)
+	} else {
+		user, err := db.GetUser(update.Message.From.ID)
+		if err != nil {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Для начала нужно зарегистрироваться: %s", words[1]))
+			bot.Send(msg)
+		} else {
+			err = db.UpdateUserName(user.Id, words[1])
+			if err != nil {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка")
+				bot.Send(msg)
+			} else {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Успешно переименован: %s", words[1]))
+				bot.Send(msg)
+			}
 		}
 	}
 	return nil
@@ -244,11 +270,11 @@ func (n *Handler) Help(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.D
 	msgText := "Команды: \n" +
 		"/start - запускает отслеживание проебов и вывод уведомлений в чат\n" +
 		"Далее везде где квадратные скобочки, их не пишем, меняем то что в них, например - /register freak\n" +
-		"/register [игровойник] - регистрирует как юзера бота, ник без пробелов одним словом, можно условный\n" +
-		"/check [координаты] - проверяет брони по введенным координатам, нет проверки на правильность ввода координат, главное без пробелов. Можно несколько координат подряд\n" +
-		"/reserve [координаты] - резервирует за вами введенные координаты, те же правила что и с /check\n" +
-		"/clear [координаты] - разбронь введенных координат, только если забронировано вами, иначе нахуй идете\n" +
-		"ох удачи не сломать эту хуету..."
+		"\n/register [игровойник] - регистрирует как юзера бота, ник без пробелов одним словом, можно условный\n" +
+		"\n/check [координаты] - проверяет брони по введенным координатам, нет проверки на правильность ввода координат, главное без пробелов. Можно несколько координат подряд\n" +
+		"\n/reserve [координаты] - резервирует за вами введенные координаты, те же правила что и с /check\n" +
+		"\n/clear [координаты] - разбронь введенных координат, только если забронировано вами, иначе нахуй идете\n" +
+		"\nох удачи не сломать эту хуету..."
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
 	bot.Send(msg)
 	return nil

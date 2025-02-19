@@ -57,6 +57,10 @@ func Run(cfg *config.Config, logger *zap.Logger) error {
 						noticer.Reserve(bot, update, db, logger)
 						continue
 					}
+					if update.Message.Command() == "rename" {
+						noticer.Rename(bot, update, db, logger)
+						continue
+					}
 					if update.Message.Command() == "check" {
 						noticer.Check(bot, update, db, logger)
 						continue

@@ -27,6 +27,7 @@ type DataBase interface {
 	UpdateChat(chat Chat) error
 	OffAllChats()
 	DeleteVillage(cord string) error
+	UpdateUserName(userId uint64, newName string) error
 }
 
 type User struct {
@@ -157,6 +158,14 @@ func (h *Handler) DeleteVillage(cord string) error {
 	_, err := h.db.Exec("delete from villages where cords = $1", cord)
 	if err != nil {
 		h.logger.Info("Failed to delete from villages", zap.Error(err))
+	}
+	return err
+}
+
+func (h *Handler) UpdateUserName(userId uint64, newName string) error {
+	_, err := h.db.Exec("update users set nickname = $1 where id = $2", newName, userId)
+	if err != nil {
+		h.logger.Info("Failed to update name", zap.Error(err))
 	}
 	return err
 }
