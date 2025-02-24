@@ -18,7 +18,6 @@ type Handler struct{}
 
 type Noticer interface {
 	Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
-	SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64
 	Stop(psql *sql.DB, logger *zap.Logger) error
 	Register(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
 	Check(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error
@@ -74,6 +73,9 @@ type EnnobleData struct {
 	Data   []Ennoblement `json:"data"`
 }
 
+const TribeId = 309
+const StartLimit = 5
+
 func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
 	db := database.NewDBHandler(psql, logger)
 	chat, err := db.GetChat(update.Message.Chat.ID)
@@ -94,13 +96,13 @@ func (n *Handler) Start(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.
 
 	if !chat.IsNoticing {
 		chat.IsNoticing = true
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Последние проёбы:")
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отслеживание потерь запущено.\nПоследние потери:")
 		bot.Send(msg)
-		chat.LastLostId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, chat.LastLostId)
+		chat.LastLostId = SendEnnobleInfo(bot, update.Message.Chat.ID, StartLimit)
 		go func() {
 			for {
 				time.Sleep(1 * time.Minute)
-				chat.LastLostId = n.SendEnnobleInfo(bot, update.Message.Chat.ID, chat.LastLostId)
+				chat.LastLostId = SendNewEnnobleInfo(bot, update.Message.Chat.ID, chat.LastLostId)
 			}
 		}()
 	}
@@ -268,13 +270,12 @@ func (n *Handler) Reserve(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sq
 
 func (n *Handler) Help(bot *tgbotapi.BotAPI, update tgbotapi.Update, psql *sql.DB, logger *zap.Logger) error {
 	msgText := "Команды: \n" +
-		"/start - запускает отслеживание проебов и вывод уведомлений в чат\n" +
-		"Далее везде где квадратные скобочки, их не пишем, меняем то что в них, например - /register freak\n" +
+		"\n/notice - запускает отслеживание потерь и вывод уведомлений в чат\n" +
+		"\nДалее везде где квадратные скобочки, их не пишем, меняем то что в них, например - /register freak\n" +
 		"\n/register [игровойник] - регистрирует как юзера бота, ник без пробелов одним словом, можно условный\n" +
 		"\n/check [координаты] - проверяет брони по введенным координатам, нет проверки на правильность ввода координат, главное без пробелов. Можно несколько координат подряд\n" +
 		"\n/reserve [координаты] - резервирует за вами введенные координаты, те же правила что и с /check\n" +
-		"\n/clear [координаты] - разбронь введенных координат, только если забронировано вами, иначе нахуй идете\n" +
-		"\nох удачи не сломать эту хуету..."
+		"\n/clear [координаты] - разбронь введенных координат, только если забронировано вами\n"
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
 	bot.Send(msg)
 	return nil
@@ -286,8 +287,26 @@ func (n *Handler) Stop(psql *sql.DB, logger *zap.Logger) error {
 	return nil
 }
 
-func (n *Handler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {
-	httpRequest := "https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?limit=500&sort=createdAt%3ADESC"
+func CreateEnnobleMsg(data Ennoblement) string {
+	ennobleTime, _ := time.Parse(time.RFC3339, data.CreatedAt)
+	ennobleTime = ennobleTime.Add(time.Hour)
+	formatedTime := ennobleTime.Format("15:04:05 02.01.2006")
+	villageInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Village.ProfileUrl, data.Village.FullName)
+	oldOwnerInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Village.Player.ProfileUrl, data.Village.Player.Name)
+	newOwnerInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.NewOwner.ProfileUrl, data.NewOwner.Name)
+	ownerTribeInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.NewOwner.Tribe.ProfileUrl, data.NewOwner.Tribe.Name)
+	msg := fmt.Sprintf("%s проебал хату в %s(PL)\nДеревня: %s\nПидарасина: %s\nПлемя: %s\n", oldOwnerInfo, formatedTime, villageInfo, newOwnerInfo, ownerTribeInfo)
+	return msg
+}
+
+func (data *EnnobleData) GetData() {
+	var httpRequest string
+	if len(data.Data) == 0 {
+		httpRequest = "https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?limit=500&sort=createdAt%3ADESC"
+	}
+	if len(data.Data) > 0 {
+		httpRequest = fmt.Sprintf("https://twhelp.app/api/v2/versions/pl/servers/pl206/ennoblements?cursor=%s%%3D&limit=500&sort=createdAt%%3ADESC", data.Cursor.Next)
+	}
 	resp, err := http.Get(httpRequest)
 	if err != nil {
 		log.Panic(err)
@@ -299,43 +318,67 @@ func (n *Handler) SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int
 		log.Panic(err)
 	}
 
-	var data EnnobleData
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		log.Panic(err)
 	}
+}
 
-	index := 0
-	for i, v := range data.Data {
-		if v.Village.Player != nil && v.Village.Player.Tribe != nil && lastId != v.Id && v.Village.Player.Tribe.Id == 309 {
-			continue
-		}
-		if lastId == v.Id {
-			index = i - 1
-			break
-		}
-		if i == 99 {
-			index = 99
-		}
-	}
-	for ; index >= 0; index-- {
-		if data.Data[index].Village.Player != nil && data.Data[index].Village.Player.Tribe != nil && data.Data[index].Village.Player.Tribe.Id == 309 && lastId != data.Data[index].Id {
-			lastId = data.Data[index].Id
-			//if data.Data[index].NewOwner.Tribe.Id == 309 {
-			//	continue
-			//}
-			ennobleTime, _ := time.Parse(time.RFC3339, data.Data[index].CreatedAt)
-			ennobleTime = ennobleTime.Add(time.Hour)
-			formatedTime := ennobleTime.Format("15:04:05 02.01.2006")
-			villageInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[index].Village.ProfileUrl, data.Data[index].Village.FullName)
-			oldOwnerInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[index].Village.Player.ProfileUrl, data.Data[index].Village.Player.Name)
-			newOwnerInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[index].NewOwner.ProfileUrl, data.Data[index].NewOwner.Name)
-			ownerTribeInfo := fmt.Sprintf("<a href='%s'>%s</a>", data.Data[index].NewOwner.Tribe.ProfileUrl, data.Data[index].NewOwner.Tribe.Name)
-			msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("%s проебал хату в %s(PL)\nДеревня: %s\nПидарасина: %s\nПлемя: %s\n", oldOwnerInfo, formatedTime, villageInfo, newOwnerInfo, ownerTribeInfo))
-			msg.ParseMode = tgbotapi.ModeHTML
-			msg.DisableWebPagePreview = true
-			bot.Send(msg)
+func SendEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, limit int) int64 {
+	data := new(EnnobleData)
+	villages := make([]Ennoblement, 0, limit)
+
+	//TODO: search limit
+	for len(villages) < limit {
+		data.GetData()
+		for _, ennoble := range data.Data {
+			if ennoble.Village.Player != nil && ennoble.Village.Player.Tribe != nil {
+				if ennoble.Village.Player.Tribe.Id == TribeId && ennoble.NewOwner.Tribe.Id != TribeId {
+					villages = append(villages, ennoble)
+					if len(villages) == limit {
+						break
+					}
+				}
+			}
 		}
 	}
+
+	for i := len(villages) - 1; i >= 0; i-- {
+		msg := tgbotapi.NewMessage(chatId, CreateEnnobleMsg(villages[i]))
+		msg.ParseMode = tgbotapi.ModeHTML
+		msg.DisableWebPagePreview = true
+		bot.Send(msg)
+	}
+
+	return villages[0].Id
+}
+
+func SendNewEnnobleInfo(bot *tgbotapi.BotAPI, chatId int64, lastId int64) int64 {
+	data := new(EnnobleData)
+	var villages []Ennoblement
+
+	for len(villages) == 0 || lastId != villages[len(villages)-1].Id {
+		data.GetData()
+		for _, ennoble := range data.Data {
+			if ennoble.Village.Player != nil && ennoble.Village.Player.Tribe != nil {
+				if ennoble.Village.Player.Tribe.Id == TribeId && ennoble.NewOwner.Tribe.Id != TribeId {
+					villages = append(villages, ennoble)
+					if lastId == ennoble.Id {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	villages = villages[:len(villages)-1]
+	for i := len(villages) - 1; i >= 0; i-- {
+		lastId = villages[i].Id
+		msg := tgbotapi.NewMessage(chatId, CreateEnnobleMsg(villages[i]))
+		msg.ParseMode = tgbotapi.ModeHTML
+		msg.DisableWebPagePreview = true
+		bot.Send(msg)
+	}
+
 	return lastId
 }

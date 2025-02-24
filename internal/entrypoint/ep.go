@@ -45,7 +45,7 @@ func Run(cfg *config.Config, logger *zap.Logger) error {
 			if update.Message != nil {
 				//log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 				if update.Message.IsCommand() {
-					if update.Message.Command() == "start" {
+					if update.Message.Command() == "notice" {
 						noticer.Start(bot, update, db, logger)
 						continue
 					}

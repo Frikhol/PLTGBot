@@ -34,4 +34,3 @@ CREATE TABLE "villages" (
 ALTER TABLE "villages" ADD FOREIGN KEY ("reserver_id") REFERENCES "users" ("id");
 ALTER TABLE "chats_config" ADD FOREIGN KEY ("chat_id") REFERENCES  "chats" ("id");
 
-DROP TABLE villages;
